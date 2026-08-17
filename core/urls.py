@@ -1,3 +1,4 @@
 from django.urls import path
 from . import views
 urlpatterns=[path("",views.dashboard,name="dashboard"),path("projects/new/",views.project_create,name="project_create"),path("projects/<int:pk>/",views.project_detail,name="project_detail"),path("projects/<int:pk>/upload/",views.image_upload,name="image_upload"),path("images/<int:image_id>/analyze/",views.analysis_run,name="analysis_run"),path("analyses/<int:pk>/",views.analysis_detail,name="analysis_detail"),path("analyses/<int:pk>/review/",views.review_create,name="review_create"),path("projects/<int:pk>/report.docx",views.report_download,name="report_download")]
+urlpatterns += [path("projects/<int:pk>/brats/upload/",views.mri_study_upload,name="mri_study_upload"),path("brats/studies/<int:study_id>/run/",views.brats_job_run,name="brats_job_run"),path("brats/jobs/<int:pk>/",views.brats_job_detail,name="brats_job_detail"),path("brats/jobs/<int:pk>/review/",views.brats_review_create,name="brats_review_create")]

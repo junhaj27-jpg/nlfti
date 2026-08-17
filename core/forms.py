@@ -1,5 +1,5 @@
 from django import forms
-from .models import Project, MedicalImage, Review
+from .models import Project, MedicalImage, Review, MRIStudy, JobReview
 from .validators import validate_nifti
 
 class ProjectForm(forms.ModelForm):
@@ -16,3 +16,14 @@ class MedicalImageForm(forms.ModelForm):
 class ReviewForm(forms.ModelForm):
     class Meta: model = Review; fields = ["decision", "comment"]
 
+class MRIStudyForm(forms.ModelForm):
+    class Meta: model=MRIStudy; fields=["study_date","description","t1","t1ce","t2","flair","reference_mask"]; widgets={"study_date":forms.DateInput(attrs={"type":"date"})}
+    def clean(self):
+        cleaned=super().clean()
+        for key in ("t1","t1ce","t2","flair","reference_mask"):
+            upload=cleaned.get(key)
+            if upload: validate_nifti(upload)
+        return cleaned
+
+class JobReviewForm(forms.ModelForm):
+    class Meta: model=JobReview; fields=["decision","comment"]

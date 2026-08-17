@@ -13,4 +13,7 @@ staticfiles/
 *.pth
 *.onnx
 outputs/
-
+data/
+models/
+inference-work/
+.test-temp/
