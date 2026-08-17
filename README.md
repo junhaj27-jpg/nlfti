@@ -17,6 +17,11 @@
 - 승인/반려 의견과 시각, AuditLog 기록 및 승인 결과 불변 처리
 - 프로젝트·모델·입력·결과·검토 이력·한계를 포함한 DOCX 보고서
 - FastAPI 계산 API와 `/docs` Swagger UI
+- 익명 Subject와 T01/T02 시점별 종양 부피 변화 추적
+- 원본 AI 마스크를 보존하는 2D 브러시 수정본과 재검토
+- Hazard/RiskAssessment/RiskControl 위험관리 및 DOCX 요약
+- 분석 실패·검토 반려 기반 부적합과 CAPA 효과성 검증
+- 분석·승인·모델 Dice·부피 변화·CAPA 통합 대시보드
 
 ## BraTS 데이터 준비
 
@@ -55,6 +60,29 @@ MONAI_MODEL_PATH=
 ```
 
 mock 결과는 영상 intensity 규칙 기반이며 모델 성능을 나타내지 않습니다.
+
+## 전체 업무 흐름
+
+1. ADMIN이 사용자와 모델 버전을 등록하고 역할을 부여합니다.
+2. ANALYST가 프로젝트와 환자정보가 아닌 익명 `Subject Code`를 생성합니다.
+3. Subject에 T01, T02 순서로 촬영일, 병원·장비 코드, 치료 이벤트와 MRI 4채널을 등록합니다.
+4. FastAPI/MONAI 또는 mock 분석을 실행하고 원본 segmentation, overlay, JSON 지표를 확인합니다.
+5. 이전 시점 대비 전체 종양 부피 증감량·증감률을 확인합니다. 병원 또는 장비 변경 구간에는 직접 비교 경고가 표시됩니다.
+6. 필요한 경우 ANALYST가 2D 브러시로 mask를 수정합니다. 원본은 보존되고 수정본은 별도 NIfTI로 저장되어 재검토 상태가 됩니다.
+7. REVIEWER가 원본 결과 또는 수정본을 승인·반려합니다. 승인된 결과는 수정할 수 없습니다.
+8. 실패나 반려를 Hazard/Risk 및 Nonconformity에 연결하고 CAPA 원인·시정·예방조치와 효과성을 관리합니다.
+9. 승인된 분석의 RA DOCX, 위험관리 요약 DOCX와 CAPA DOCX를 다운로드합니다.
+
+## 데모 계정
+
+실제 비밀번호는 저장소에 기록하지 않습니다. 로컬에서 다음과 같이 환경변수를 지정합니다.
+
+```powershell
+$env:DEMO_PASSWORD="로컬에서만-사용할-강한-비밀번호"
+python manage.py create_demo_users
+```
+
+`demo_analyst`, `demo_reviewer`, `demo_admin`이 생성됩니다. 공개 배포 전에는 데모 계정을 비활성화하거나 비밀번호를 교체하십시오.
 
 ## 설치와 실행
 
@@ -115,7 +143,7 @@ PostgreSQL까지 한 번에 실행하려면 Docker가 있는 환경에서 `docke
 pytest -q
 ```
 
-테스트는 NIfTI 손상 및 공간 불일치, 부피/지표, FastAPI 작업 상태, 역할별 접근, 승인 이후 수정 방지, BraTS DOCX 보고서와 작은 NumPy 배열 기반 mock inference를 포함합니다. 테스트 NIfTI는 pytest 임시 디렉터리에서만 만들어집니다. MONAI 실제 추론 테스트는 공개 데이터와 호환 가중치가 필요한 통합 검증 항목이므로 기본 테스트에서 제외됩니다.
+테스트는 NIfTI 검증, 부피/지표, FastAPI 상태, 권한과 승인 잠금, 시점별 증감률·비교 경고, 원본 마스크 보존·수정본 재계산, 위험등급, CAPA 전환·권한·기한 초과, RA/위험/CAPA DOCX를 포함합니다. synthetic NIfTI는 pytest 임시 디렉터리에서만 생성됩니다. 실제 MONAI 추론은 공개 데이터와 호환 가중치가 필요한 통합 검증 항목이므로 기본 테스트에서 제외됩니다.
 
 ## 구조
 
@@ -142,5 +170,16 @@ docker-compose.yml  Django/FastAPI/PostgreSQL 개발 구성
 - overlay는 중앙 axial slice 한 장이며 전문 뷰어/다중 평면/창폭 조절은 포함하지 않습니다.
 - DOCX만 구현되어 있고 PDF 변환은 배포 환경의 LibreOffice 등 별도 엔진이 필요합니다.
 - 실제 BraTS 사례에서 orientation 역변환, label mapping, 모델별 normalization 호환성과 정량 성능을 별도 검증해야 합니다.
+- 2D 보정기는 axial 단일 slice용 포트폴리오 UI이며 전문 contour 편집기, undo/redo, interpolation을 제공하지 않습니다.
+- 병원·장비 변경 경고는 정량 harmonization을 수행하지 않습니다.
+- 위험 행렬은 예시 5×5 규칙이며 조직의 ISO 14971 절차나 규제 QMS를 대체하지 않습니다.
+
+## 개인정보 보호 원칙
+
+- Patient 이름 대신 프로젝트 범위에서 유일한 익명 Subject Code만 저장합니다.
+- 이름, 생년월일, 병원번호, 주소 등 직접 식별자는 입력하지 않습니다.
+- 병원·장비에는 포트폴리오용 코드만 사용하고 원본 DICOM은 받지 않습니다.
+- NIfTI, 수정본, 모델 가중치와 runtime 결과는 Git에서 제외됩니다.
+- 로그와 AuditLog에는 원본 voxel 데이터나 파일 내용을 기록하지 않습니다.
 - 규제 제출용 전자서명, 완전한 21 CFR Part 11 감사 추적, 데이터 무결성 검증 및 임상 검증을 제공하지 않습니다.
 - Django 관리 화면의 사용자/모델 관리는 `is_staff` 권한도 필요합니다.

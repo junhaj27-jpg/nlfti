@@ -1,7 +1,9 @@
 import uuid
+from datetime import date
 from django.conf import settings
 from django.contrib.auth.models import Group
 from django.core.exceptions import ValidationError
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 
 ROLES = ("ANALYST", "REVIEWER", "ADMIN")
@@ -95,6 +97,17 @@ class MRIStudy(models.Model):
     spacing = models.JSONField(default=list)
     uploaded_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
     uploaded_at = models.DateTimeField(auto_now_add=True)
+    subject = models.ForeignKey("Subject", related_name="timepoints", null=True, blank=True, on_delete=models.PROTECT)
+    timepoint_code = models.CharField(max_length=10, blank=True)
+    timepoint_order = models.PositiveSmallIntegerField(null=True, blank=True)
+    hospital_code = models.CharField(max_length=80, blank=True)
+    equipment_code = models.CharField(max_length=120, blank=True)
+    treatment_event = models.TextField(blank=True)
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(fields=["subject","timepoint_code"],name="unique_subject_timepoint_code"),
+            models.UniqueConstraint(fields=["subject","timepoint_order"],name="unique_subject_timepoint_order"),
+        ]
 
 class AnalysisJob(models.Model):
     class Status(models.TextChoices):
@@ -148,6 +161,108 @@ class JobReview(models.Model):
     decision = models.CharField(max_length=10, choices=Decision.choices)
     comment = models.TextField()
     reviewed_at = models.DateTimeField(auto_now_add=True)
+
+class Subject(models.Model):
+    project = models.ForeignKey(Project, related_name="subjects", on_delete=models.CASCADE)
+    subject_code = models.CharField(max_length=64)
+    description = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta: constraints=[models.UniqueConstraint(fields=["project","subject_code"],name="unique_project_subject_code")]
+    def __str__(self): return self.subject_code
+
+class MaskCorrection(models.Model):
+    class Status(models.TextChoices): PENDING_REVIEW="PENDING_REVIEW","재검토 대기"; APPROVED="APPROVED","승인"; REJECTED="REJECTED","반려"
+    result = models.ForeignKey(AnalysisResult, related_name="corrections", on_delete=models.PROTECT)
+    corrected_mask_file = models.FileField(upload_to=result_upload_path)
+    corrected_overlay_file = models.ImageField(upload_to=result_upload_path, blank=True)
+    reason = models.TextField()
+    editor = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    status = models.CharField(max_length=20, choices=Status.choices, default=Status.PENDING_REVIEW)
+    whole_tumor_voxels = models.PositiveBigIntegerField(default=0)
+    tumor_core_voxels = models.PositiveBigIntegerField(default=0)
+    enhancing_tumor_voxels = models.PositiveBigIntegerField(default=0)
+    whole_tumor_cm3 = models.FloatField(default=0)
+    tumor_core_cm3 = models.FloatField(default=0)
+    enhancing_tumor_cm3 = models.FloatField(default=0)
+    metrics = models.JSONField(default=dict)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    def save(self,*args,**kwargs):
+        if self.pk and MaskCorrection.objects.filter(pk=self.pk,status=self.Status.APPROVED).exists():
+            old=MaskCorrection.objects.get(pk=self.pk)
+            if any(getattr(old,f)!=getattr(self,f) for f in ("status","corrected_mask_file","whole_tumor_cm3","tumor_core_cm3","enhancing_tumor_cm3","metrics")): raise ValidationError("승인된 수정본은 변경할 수 없습니다.")
+        super().save(*args,**kwargs)
+
+class CorrectionReview(models.Model):
+    correction = models.ForeignKey(MaskCorrection, related_name="reviews", on_delete=models.CASCADE)
+    reviewer = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    decision = models.CharField(max_length=10, choices=JobReview.Decision.choices)
+    comment = models.TextField()
+    reviewed_at = models.DateTimeField(auto_now_add=True)
+
+class Hazard(models.Model):
+    project = models.ForeignKey(Project, related_name="hazards", on_delete=models.CASCADE)
+    code = models.CharField(max_length=30)
+    hazard = models.CharField(max_length=250)
+    hazardous_situation = models.TextField()
+    harm = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    class Meta: constraints=[models.UniqueConstraint(fields=["project","code"],name="unique_project_hazard_code")]
+
+class RiskAssessment(models.Model):
+    hazard = models.ForeignKey(Hazard, related_name="assessments", on_delete=models.CASCADE)
+    analysis_job = models.ForeignKey(AnalysisJob, related_name="risk_assessments", null=True, blank=True, on_delete=models.SET_NULL)
+    rejected_review = models.ForeignKey(JobReview, related_name="risk_assessments", null=True, blank=True, on_delete=models.SET_NULL)
+    severity = models.PositiveSmallIntegerField(validators=[MinValueValidator(1),MaxValueValidator(5)])
+    probability = models.PositiveSmallIntegerField(validators=[MinValueValidator(1),MaxValueValidator(5)])
+    initial_risk = models.PositiveSmallIntegerField(default=1)
+    residual_severity = models.PositiveSmallIntegerField(validators=[MinValueValidator(1),MaxValueValidator(5)])
+    residual_probability = models.PositiveSmallIntegerField(validators=[MinValueValidator(1),MaxValueValidator(5)])
+    residual_risk = models.PositiveSmallIntegerField(default=1)
+    rationale = models.TextField(blank=True)
+    assessed_at = models.DateTimeField(auto_now_add=True)
+    @staticmethod
+    def level(score): return "HIGH" if score>=15 else "MEDIUM" if score>=6 else "LOW"
+    def save(self,*args,**kwargs): self.initial_risk=self.severity*self.probability; self.residual_risk=self.residual_severity*self.residual_probability; super().save(*args,**kwargs)
+    @property
+    def initial_level(self): return self.level(self.initial_risk)
+    @property
+    def residual_level(self): return self.level(self.residual_risk)
+
+class RiskControl(models.Model):
+    assessment = models.ForeignKey(RiskAssessment, related_name="controls", on_delete=models.CASCADE)
+    control_measure = models.TextField()
+    verification = models.TextField(blank=True)
+    implemented = models.BooleanField(default=False)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class Nonconformity(models.Model):
+    class Source(models.TextChoices): ANALYSIS_FAILURE="ANALYSIS_FAILURE","분석 실패"; REVIEW_REJECTION="REVIEW_REJECTION","검토 반려"; OTHER="OTHER","기타"
+    project = models.ForeignKey(Project, related_name="nonconformities", on_delete=models.CASCADE)
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    source = models.CharField(max_length=30, choices=Source.choices)
+    analysis_job = models.ForeignKey(AnalysisJob, related_name="nonconformities", null=True, blank=True, on_delete=models.SET_NULL)
+    rejected_review = models.ForeignKey(JobReview, related_name="nonconformities", null=True, blank=True, on_delete=models.SET_NULL)
+    created_by = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+class CAPA(models.Model):
+    class Status(models.TextChoices): OPEN="OPEN","등록"; INVESTIGATING="INVESTIGATING","조사"; ACTION_IN_PROGRESS="ACTION_IN_PROGRESS","조치 진행"; EFFECTIVENESS_REVIEW="EFFECTIVENESS_REVIEW","효과성 검토"; CLOSED="CLOSED","종료"
+    nonconformity = models.OneToOneField(Nonconformity, related_name="capa", on_delete=models.CASCADE)
+    root_cause = models.TextField(blank=True)
+    corrective_action = models.TextField(blank=True)
+    preventive_action = models.TextField(blank=True)
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="owned_capas", on_delete=models.PROTECT)
+    target_date = models.DateField()
+    status = models.CharField(max_length=30, choices=Status.choices, default=Status.OPEN)
+    effectiveness_result = models.TextField(blank=True)
+    closure_approved_by = models.ForeignKey(settings.AUTH_USER_MODEL, related_name="approved_capas", null=True, blank=True, on_delete=models.PROTECT)
+    closed_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+    @property
+    def overdue(self): return self.status!=self.Status.CLOSED and self.target_date<date.today()
 
 def user_role(user):
     if user.is_superuser: return "ADMIN"

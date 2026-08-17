@@ -20,6 +20,7 @@ def build_ra_report(project):
                 for region,metric in r.metrics.items():
                     cells=table.add_row().cells
                     for cell,text in zip(cells,(region,f"{metric['dice']:.4f}",f"{metric['iou']:.4f}",f"{metric['sensitivity']:.4f}",f"{metric['precision']:.4f}")): cell.text=text
+                for correction in r.corrections.all(): doc.add_paragraph(f"마스크 수정본 #{correction.pk}: {correction.get_status_display()} / 수정자 {correction.editor.username} / 사유 {correction.reason} / 전체 종양 {correction.whole_tumor_cm3:.4f} cm³")
             doc.add_heading("검토·승인 이력",3)
             for review in job.reviews.all(): doc.add_paragraph(f"{review.reviewed_at:%Y-%m-%d %H:%M} / {review.reviewer.username} / {review.get_decision_display()} / {review.comment}")
     for image in project.images.prefetch_related("analyses__reviews").all():
@@ -36,3 +37,25 @@ def build_ra_report(project):
         for job in study.jobs.exclude(error_message=""): doc.add_paragraph(f"작업 #{job.pk}: {job.error_message}")
     doc.add_heading("4. 알려진 한계와 주의사항", 1); doc.add_paragraph("모델 성능은 사용한 가중치, BraTS 전처리 호환성, 입력 영상 품질에 의존합니다. mock 모드는 검증되지 않은 임계값 기반 결과입니다. 임상 사용, 진단, 치료 결정에 사용할 수 없으며 실제 의료기기 검증 및 규제 제출 요건을 충족하지 않습니다. 기준 마스크가 없는 경우 성능지표는 산출되지 않습니다.")
     stream=BytesIO(); doc.save(stream); return stream.getvalue()
+
+def build_risk_report(project):
+    doc=Document(); doc.add_heading("위험관리 요약 보고서",0); doc.add_paragraph(DISCLAIMER); doc.add_paragraph(f"프로젝트: {project.title}\n문서 목적: AI 의료영상 분석 관련 위험 식별, 평가, 통제 및 잔여위험 검토")
+    for hazard in project.hazards.prefetch_related("assessments__controls").all():
+        doc.add_heading(f"{hazard.code} · {hazard.hazard}",1); doc.add_paragraph(f"위해 상황: {hazard.hazardous_situation}\n위해: {hazard.harm or '-'}")
+        table=doc.add_table(rows=1,cols=5); table.style="Table Grid"
+        for cell,text in zip(table.rows[0].cells,("통제 전 S×P","통제 전 등급","통제 후 S×P","잔여위험 등급","근거")): cell.text=text
+        for assessment in hazard.assessments.all():
+            cells=table.add_row().cells
+            for cell,text in zip(cells,(f"{assessment.severity}×{assessment.probability}={assessment.initial_risk}",assessment.initial_level,f"{assessment.residual_severity}×{assessment.residual_probability}={assessment.residual_risk}",assessment.residual_level,assessment.rationale)): cell.text=str(text)
+            for control in assessment.controls.all(): doc.add_paragraph(f"통제: {control.control_measure} / 구현={control.implemented} / 검증={control.verification or '-'}")
+    doc.add_heading("알려진 한계",1); doc.add_paragraph("위험등급은 포트폴리오용 5×5 행렬 예시이며 조직의 승인된 위험관리 절차와 ISO 14971 적용을 대체하지 않습니다.")
+    out=BytesIO(); doc.save(out); return out.getvalue()
+
+def build_capa_report(project):
+    doc=Document(); doc.add_heading("부적합 및 CAPA 보고서",0); doc.add_paragraph(DISCLAIMER); doc.add_paragraph(f"프로젝트: {project.title}")
+    for nc in project.nonconformities.select_related("capa").all():
+        doc.add_heading(f"NC-{nc.pk}: {nc.title}",1); doc.add_paragraph(f"출처: {nc.get_source_display()}\n부적합 내용: {nc.description}\n생성일: {nc.created_at:%Y-%m-%d}")
+        if hasattr(nc,"capa"):
+            capa=nc.capa; doc.add_heading(f"CAPA-{capa.pk}",2); doc.add_paragraph(f"상태: {capa.get_status_display()}\n원인 분석: {capa.root_cause or '-'}\n시정조치: {capa.corrective_action or '-'}\n예방조치: {capa.preventive_action or '-'}\n담당자: {capa.owner.username}\n목표일: {capa.target_date}\n기한 초과: {capa.overdue}\n효과성 검증: {capa.effectiveness_result or '-'}\n종료 승인자: {capa.closure_approved_by.username if capa.closure_approved_by else '-'}")
+        else: doc.add_paragraph("연결된 CAPA가 없습니다.")
+    out=BytesIO(); doc.save(out); return out.getvalue()
