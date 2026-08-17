@@ -1,0 +1,16 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.sqlite3
+media/
+staticfiles/
+*.nii
+*.nii.gz
+*.dcm
+*.pt
+*.pth
+*.onnx
+outputs/
+
