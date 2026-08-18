@@ -237,6 +237,68 @@ curl http://127.0.0.1:8001/api/v1/inference/jobs/{job_id}/results
 
 기술 키워드: `Django`, `FastAPI`, `PostgreSQL`, `MONAI`, `PyTorch`, `NIfTI`, `Bootstrap`, `pytest`, `Docker`, `python-docx`
 
+## 역할별 권한
+
+| 기능 | ANALYST | REVIEWER | ADMIN |
+|---|:---:|:---:|:---:|
+| 프로젝트·Subject 생성 | 가능 | 조회 | 가능 |
+| MRI 등록·AI 분석 요청 | 가능 | 조회 | 가능 |
+| 2D 마스크 수정본 생성 | 가능 | 조회 | 가능 |
+| 분석 결과 승인·반려 | 불가 | 가능 | 가능 |
+| 수정 마스크 재검토 | 불가 | 가능 | 가능 |
+| 위험·부적합·CAPA 등록 | 가능 | 조회 | 가능 |
+| CAPA 종료 승인 | 불가 | 가능 | 가능 |
+| 사용자·모델 버전 관리 | 불가 | 불가 | 가능 |
+
+권한은 화면 표시뿐 아니라 Django view decorator와 모델·서비스 계층의 상태 검사를 함께 사용해 적용합니다.
+
+## 3분 데모 시나리오
+
+1. `demo_analyst`로 로그인해 프로젝트와 익명 Subject를 생성합니다.
+2. T01과 T02에 synthetic 또는 공개·비식별 BraTS MRI 4채널을 등록합니다.
+3. mock 분석을 실행하고 segmentation overlay와 WT/TC/ET 부피를 확인합니다.
+4. Subject 화면에서 이전 시점 대비 부피 증감률과 병원·장비 변경 경고를 확인합니다.
+5. 2D 브러시로 AI 마스크 수정본을 만들고 원본 파일이 유지되는 것을 확인합니다.
+6. `demo_reviewer`로 수정본 또는 분석 결과를 승인·반려합니다.
+7. 실패·반려 건을 위험평가와 부적합에 연결하고 CAPA를 진행합니다.
+8. RA, 위험관리, CAPA DOCX 보고서를 다운로드합니다.
+
+실제 환자 데이터나 모델 가중치 없이 시연할 때는 `INFERENCE_MODE=mock`을 사용합니다.
+
+## 테스트 전략
+
+| 테스트 계층 | 검증 범위 |
+|---|---|
+| 계산 단위 테스트 | voxel 부피, Dice, IoU, 민감도, 정밀도, 시점별 증감률 |
+| NIfTI 검증 테스트 | 손상 파일, shape·affine·spacing 불일치, 확장자와 크기 제한 |
+| 추론 API 테스트 | 작업 생성, 진행 상태, mock 결과와 지표 API |
+| 권한 테스트 | ANALYST·REVIEWER·ADMIN별 접근 제어와 CAPA 종료 권한 |
+| 데이터 무결성 테스트 | 승인 결과 잠금, 원본 마스크 보존, 수정본 별도 저장 |
+| 품질 프로세스 테스트 | 위험등급, 잔여위험, CAPA 상태 전환과 기한 초과 |
+| 문서 테스트 | RA·위험관리·CAPA DOCX 생성과 필수 섹션 포함 여부 |
+
+모든 영상 테스트는 작은 NumPy 배열로 만든 synthetic NIfTI를 사용하며 실제 환자 영상은 사용하지 않습니다.
+
+## 구현 중 해결한 문제
+
+- Nibabel이 일반 `BytesIO` 대상 저장을 지원하지 않는 문제를 NIfTI 바이트 직렬화 또는 안전한 임시 파일 방식으로 해결했습니다.
+- 네 MRI 채널의 shape만 비교할 경우 발생할 수 있는 공간 오정렬을 affine과 spacing 검증까지 확장해 차단했습니다.
+- GPU 메모리 부족 시 동일 설정으로 반복 실패하지 않도록 ROI 크기와 sliding-window batch를 낮춰 한 번 재시도합니다.
+- 승인 잠금을 UI에만 의존하지 않고 Django 모델의 `save()`와 검토 서비스에서도 검사하도록 구성했습니다.
+- 수동 보정이 AI 원본을 덮어쓰지 않도록 수정본과 재검토 이력을 독립 모델로 분리했습니다.
+- `.nii.gz` 압축파일은 압축된 크기뿐 아니라 해제된 데이터 크기 상한도 검사해 비정상 압축파일 위험을 줄였습니다.
+
+## 향후 로드맵
+
+- Celery 또는 RQ와 Redis를 이용한 영속 비동기 추론 작업
+- S3/MinIO 기반 암호화 object storage와 보존기간 정책
+- Cornerstone 또는 OHIF 기반 다중 평면 의료영상 뷰어
+- 3D contour 편집, undo/redo와 slice interpolation
+- 실제 공개 BraTS 데이터 기반 모델별 Dice·추론시간 벤치마크
+- PDF 전자서명과 문서 버전관리
+- GitHub Actions 기반 테스트·보안검사·컨테이너 빌드 자동화
+- 조직별 ISO 14971 위험행렬과 CAPA 승인 워크플로 설정
+
 ## 보안과 데이터 정책
 
 - 확장자·최대 크기·경로 문자를 검사하며 저장 파일명은 UUID로 교체합니다.
