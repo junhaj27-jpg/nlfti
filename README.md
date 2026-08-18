@@ -120,6 +120,8 @@ FastAPI 작업 레지스트리는 MVP에서 프로세스 메모리에 있으므�
 
 PostgreSQL까지 한 번에 실행하려면 Docker가 있는 환경에서 `docker compose up --build`를 사용합니다. 로컬에서 `DATABASE_URL`이 없으면 편의상 SQLite를 사용하고, 운영 구성은 `.env.example` 형식의 PostgreSQL URL을 사용합니다.
 
+운영용 Docker Compose, HTTPS, Gunicorn, 보안 설정, 백업 및 GPU 배포 절차는 [DEPLOYMENT.md](DEPLOYMENT.md)를 참고하십시오. 개발용 `docker-compose.yml`과 운영용 `docker-compose.prod.yml`은 분리되어 있습니다.
+
 ## 데모 흐름
 
 1. 관리자 화면에서 사용자를 만들고 `ANALYST`, `REVIEWER`, `ADMIN` 중 그룹을 지정합니다. 모델 이름/버전을 하나 등록합니다.

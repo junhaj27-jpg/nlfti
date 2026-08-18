@@ -14,3 +14,5 @@ pytest-django>=4.9,<5
 scipy>=1.14,<2
 torch>=2.4,<3
 monai>=1.4,<2
+gunicorn>=23,<24
+whitenoise>=6.8,<7

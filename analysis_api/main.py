@@ -24,6 +24,8 @@ def _save(upload,directory,label):
 
 @app.get("/health")
 def health(): return {"status":"ok","inference_mode":os.getenv("INFERENCE_MODE","mock")}
+@app.get("/api/health",include_in_schema=False)
+def proxied_health(): return health()
 @app.post("/api/v1/inference/jobs",status_code=202)
 def submit_job(t1:UploadFile=File(...),t1ce:UploadFile=File(...),t2:UploadFile=File(...),flair:UploadFile=File(...),reference:UploadFile|None=File(None)):
     directory=WORK_ROOT/"uploads"/uuid.uuid4().hex; directory.mkdir(parents=True,exist_ok=False)

@@ -2,7 +2,10 @@ from django.contrib.auth.decorators import login_required
 from django.contrib import messages
 from django.db import transaction
 from django.db.models import Avg,Q
-from django.http import HttpResponse, JsonResponse
+from django.http import FileResponse, Http404, HttpResponse, JsonResponse
+from django.conf import settings
+from pathlib import Path
+import mimetypes
 import json
 from django.shortcuts import get_object_or_404, redirect, render
 from django.views.decorators.http import require_POST
@@ -16,6 +19,20 @@ from .mask_editing import create_correction, slice_png
 from .brats_service import execute_job, validate_study
 from .reports import build_ra_report,build_risk_report,build_capa_report
 from .services import run_mock_analysis
+
+def health(request):
+    from django.db import connection
+    with connection.cursor() as cursor: cursor.execute("SELECT 1"); cursor.fetchone()
+    return JsonResponse({"status":"ok","service":"django"})
+
+@login_required
+def protected_media(request,path):
+    root=Path(settings.MEDIA_ROOT).resolve(); target=(root/path).resolve()
+    try: target.relative_to(root)
+    except ValueError: raise Http404
+    if not target.is_file(): raise Http404
+    response=FileResponse(target.open("rb"),content_type=mimetypes.guess_type(target.name)[0] or "application/octet-stream")
+    response["Cache-Control"]="private, no-store"; response["X-Content-Type-Options"]="nosniff"; return response
 
 @login_required
 def dashboard(request):
