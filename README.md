@@ -156,6 +156,87 @@ tests/           pytest 테스트
 docker-compose.yml  Django/FastAPI/PostgreSQL 개발 구성
 ```
 
+## 시스템 아키텍처
+
+```text
+Browser / Bootstrap UI
+        │
+        ▼
+Django Web Application
+  ├─ 인증 및 역할 권한(ANALYST / REVIEWER / ADMIN)
+  ├─ Project / Subject / Study Timepoint 관리
+  ├─ 분석 결과 검토·승인·AuditLog
+  ├─ 마스크 수정본 재검토
+  └─ RA / Risk / CAPA DOCX 보고서
+        │
+        ├──────── PostgreSQL
+        │          메타데이터, 분석 상태, 검토·품질 이력
+        │
+        ▼
+FastAPI Inference Service
+  ├─ NIfTI 무결성 및 공간정보 검증
+  ├─ MONAI preprocessing
+  ├─ sliding-window inference
+  ├─ 원본 공간 복원 및 후처리
+  └─ NIfTI / PNG / JSON 결과 생성
+        │
+        ▼
+Protected File Storage
+  NIfTI, segmentation, overlay, model weights
+```
+
+Django는 업무 상태와 규제 문서 흐름을 담당하고 FastAPI는 계산 집약적인 추론을 담당합니다. 추론 어댑터를 Django 모델과 분리해 mock 및 MONAI 구현을 같은 인터페이스로 교체할 수 있습니다.
+
+## 핵심 데이터 관계
+
+```text
+Project
+ ├─ Subject ── MRIStudy(T01, T02, ...)
+ │               └─ AnalysisJob ── AnalysisResult
+ │                                  └─ MaskCorrection ── CorrectionReview
+ ├─ Hazard ── RiskAssessment ── RiskControl
+ └─ Nonconformity ── CAPA
+```
+
+- `AnalysisResult`는 AI가 생성한 원본 결과이며 승인 이후 변경할 수 없습니다.
+- 수동 보정은 `MaskCorrection`에 별도 저장되어 원본 추적성을 유지합니다.
+- 분석 실패와 검토 반려는 위험평가 및 부적합 항목에 연결할 수 있습니다.
+- 모든 상태 변경과 주요 사용자 작업은 `AuditLog`에 기록됩니다.
+
+## API 사용 예시
+
+4채널 MRI 추론 작업을 생성합니다.
+
+```bash
+curl -X POST http://127.0.0.1:8001/api/v1/inference/jobs \
+  -F "t1=@case_t1.nii.gz" \
+  -F "t1ce=@case_t1ce.nii.gz" \
+  -F "t2=@case_t2.nii.gz" \
+  -F "flair=@case_flair.nii.gz"
+```
+
+```bash
+curl http://127.0.0.1:8001/api/v1/inference/jobs/{job_id}
+curl http://127.0.0.1:8001/api/v1/inference/jobs/{job_id}/results
+```
+
+응답에는 작업 상태와 진행률이 포함되며 완료 후 segmentation NIfTI, overlay PNG, 영역별 부피와 JSON 지표를 확인할 수 있습니다. 전체 요청·응답 스키마는 FastAPI `/docs`에서 제공합니다.
+
+## 포트폴리오 핵심 설계 판단
+
+- 실제 환자 식별정보 대신 프로젝트 범위의 익명 Subject Code만 저장했습니다.
+- 원본 AI 결과와 수정 결과를 분리해 데이터 무결성과 변경 추적성을 확보했습니다.
+- 승인 잠금을 화면이 아닌 모델 계층에서도 검사해 우회 수정을 차단했습니다.
+- GPU가 없는 개발 환경에서도 전체 업무 흐름을 검증할 수 있도록 mock 모드를 유지했습니다.
+- 병원·장비 변경 시 단순 수치 비교의 한계를 사용자에게 명시적으로 경고합니다.
+- AI 실패와 검토 반려를 위험관리, 부적합, CAPA까지 연결해 의료기기 소프트웨어 품질 흐름을 표현했습니다.
+
+## 이력서용 프로젝트 요약
+
+> Django와 FastAPI를 기반으로 BraTS 4채널 MRI의 MONAI 뇌종양 segmentation, 시점별 병변 변화 추적, AI 마스크 수동 보정, 검토·승인 및 감사 추적, 위험관리·CAPA와 RA DOCX 자동화를 구현했습니다. Synthetic NIfTI 기반 pytest로 영상 검증, 정량지표, 권한, 승인 잠금과 품질 프로세스를 검증했습니다.
+
+기술 키워드: `Django`, `FastAPI`, `PostgreSQL`, `MONAI`, `PyTorch`, `NIfTI`, `Bootstrap`, `pytest`, `Docker`, `python-docx`
+
 ## 보안과 데이터 정책
 
 - 확장자·최대 크기·경로 문자를 검사하며 저장 파일명은 UUID로 교체합니다.
